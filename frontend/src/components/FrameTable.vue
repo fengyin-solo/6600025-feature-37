@@ -1,18 +1,76 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue';
+import { ref, computed, onMounted, onBeforeUnmount, nextTick, watch } from 'vue';
 import { useCanBusStore } from '../store/canbus';
 
 const store = useCanBusStore();
 const selectedFrameId = ref<string | null>(null);
+const tableBodyRef = ref<HTMLElement | null>(null);
+
+const selectedFrameIndex = computed(() => {
+  if (!selectedFrameId.value) return -1;
+  return store.filteredFrames.findIndex(f => f.id === selectedFrameId.value);
+});
 
 const selectedFrame = computed(() => {
   if (!selectedFrameId.value) return null;
-  return store.frames.find(f => f.id === selectedFrameId.value) || null;
+  return store.filteredFrames.find(f => f.id === selectedFrameId.value) || null;
 });
+
+const hasPrevFrame = computed(() => selectedFrameIndex.value > 0);
+const hasNextFrame = computed(() => selectedFrameIndex.value >= 0 && selectedFrameIndex.value < store.filteredFrames.length - 1);
 
 function selectFrame(id: string) {
   selectedFrameId.value = selectedFrameId.value === id ? null : id;
+  if (selectedFrameId.value) {
+    nextTick(() => scrollToSelectedFrame());
+  }
 }
+
+function goToPrevFrame() {
+  if (!hasPrevFrame.value) return;
+  const prevFrame = store.filteredFrames[selectedFrameIndex.value - 1];
+  selectFrame(prevFrame.id);
+}
+
+function goToNextFrame() {
+  if (!hasNextFrame.value) return;
+  const nextFrame = store.filteredFrames[selectedFrameIndex.value + 1];
+  selectFrame(nextFrame.id);
+}
+
+function scrollToSelectedFrame() {
+  if (!tableBodyRef.value || selectedFrameIndex.value < 0) return;
+  const rows = tableBodyRef.value.querySelectorAll('tbody tr');
+  const selectedRow = rows[selectedFrameIndex.value] as HTMLElement;
+  if (selectedRow) {
+    const tableRect = tableBodyRef.value.getBoundingClientRect();
+    const rowRect = selectedRow.getBoundingClientRect();
+    if (rowRect.top < tableRect.top || rowRect.bottom > tableRect.bottom) {
+      selectedRow.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+  }
+}
+
+function handleKeydown(e: KeyboardEvent) {
+  if (!selectedFrameId.value) return;
+  if (e.target instanceof HTMLInputElement) return;
+  
+  if (e.key === 'ArrowUp') {
+    e.preventDefault();
+    goToPrevFrame();
+  } else if (e.key === 'ArrowDown') {
+    e.preventDefault();
+    goToNextFrame();
+  }
+}
+
+onMounted(() => {
+  window.addEventListener('keydown', handleKeydown);
+});
+
+onBeforeUnmount(() => {
+  window.removeEventListener('keydown', handleKeydown);
+});
 
 function formatTimestamp(ts: number): string {
   const d = new Date(ts);
@@ -92,7 +150,7 @@ function getSignalUnit(name: string): string {
     </div>
 
     <!-- Frame Table -->
-    <div class="flex-1 overflow-auto">
+    <div ref="tableBodyRef" class="flex-1 overflow-auto">
       <table class="w-full text-sm font-mono">
         <thead class="sticky top-0 bg-gray-800 z-10">
           <tr class="text-gray-400 text-left">
@@ -150,10 +208,45 @@ function getSignalUnit(name: string): string {
       class="border-t border-gray-700 bg-gray-850 p-4"
       style="background-color: #1a2234;"
     >
-      <h3 class="text-sm font-semibold text-gray-300 mb-3">
-        帧详情 — {{ formatHexId(selectedFrame.arbitrationId) }}
-        <span class="text-gray-500 font-normal ml-2">{{ selectedFrame.id }}</span>
-      </h3>
+      <div class="flex items-center justify-between mb-3">
+        <h3 class="text-sm font-semibold text-gray-300">
+          帧详情 — {{ formatHexId(selectedFrame.arbitrationId) }}
+          <span class="text-gray-500 font-normal ml-2">{{ selectedFrame.id }}</span>
+          <span class="text-gray-500 font-normal ml-2">
+            ({{ selectedFrameIndex + 1 }} / {{ store.filteredFrames.length }})
+          </span>
+        </h3>
+        <div class="flex items-center gap-2">
+          <button
+            @click="goToPrevFrame"
+            :disabled="!hasPrevFrame"
+            class="flex items-center gap-1 px-2 py-1 text-xs font-medium rounded transition-colors"
+            :class="hasPrevFrame
+              ? 'bg-gray-700 text-gray-200 hover:bg-gray-600 cursor-pointer'
+              : 'bg-gray-800 text-gray-600 cursor-not-allowed'"
+            title="上一帧 (↑)"
+          >
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"></path>
+            </svg>
+            上一帧
+          </button>
+          <button
+            @click="goToNextFrame"
+            :disabled="!hasNextFrame"
+            class="flex items-center gap-1 px-2 py-1 text-xs font-medium rounded transition-colors"
+            :class="hasNextFrame
+              ? 'bg-gray-700 text-gray-200 hover:bg-gray-600 cursor-pointer'
+              : 'bg-gray-800 text-gray-600 cursor-not-allowed'"
+            title="下一帧 (↓)"
+          >
+            下一帧
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path>
+            </svg>
+          </button>
+        </div>
+      </div>
       <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <div
           v-for="(value, name) in selectedFrame.decoded"
